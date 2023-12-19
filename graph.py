@@ -23,7 +23,7 @@ class Graph:
         if not result:
             result = self.app.acquire_token_interactive(
                 self.settings["scopes"],
-                login_hint=self.settings("username"),
+                login_hint=self.settings["username"],
             )
 
         if "access_token" in result:

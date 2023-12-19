@@ -74,10 +74,11 @@ def main():
 
     azure_settings = config["azure"]
     token_cache = msal.SerializableTokenCache()
-    if os.path.exists("token_cache.bin"):
-        token_cache.deserialize(open("token_cache.bin", "r").read())
+    token_cache_file = config_path.joinpath("token_cache.bin")
+    if os.path.exists(token_cache_file):
+        token_cache.deserialize(open(token_cache_file, "r").read())
         atexit.register(lambda:
-            open("token_cache.bin", "w").write(token_cache.serialize())
+            open(token_cache_file, "w").write(token_cache.serialize())
             # Hint: The following optional line persists only when state changed
             if token_cache.has_state_changed else None
         )

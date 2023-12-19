@@ -1,0 +1,21 @@
+* ol-calendar
+  ol-calendar is a Python-based tool designed to fetch calendar entries from
+  Microsoft Outlook and convert them to org-mode entries. This tool aims to
+  seamlessly integrate Outlook calendar events into an org-mode compatible
+  format, facilitating better task and time management for users who combine
+  these platforms.
+
+  Inspired by (and parsing functions copied from): [[https://gitlab.com/lairsdragon/msgraph-orgmode/-/tree/master][msgraph-orgmode]]
+
+** Features
+   - Fetch Outlook calendar entries.
+   - Convert calendar entries to org-mode todos/tasks.
+
+** Usage
+   : pip install -r requirements.txt
+
+   - Update config.yaml with necessary Outlook API credentials and desired
+     settings.
+   - Copy the config.yaml in your user config directory ~ol-calendar~ (It is
+     ~~/.config/ol-calendar~ in Linux).
+   - Run main.py to fetch and convert the calendar entries.
