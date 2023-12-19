@@ -1,13 +1,12 @@
-import yaml
-import os
-import requests
-import json
-import time
 import atexit
-import logging
-from datetime import datetime, date, timedelta
-import pytz
+import os
+from datetime import datetime
+from pathlib import Path
+
 import msal
+import pytz
+import yaml
+from platformdirs import user_config_dir
 
 from graph import Graph
 
@@ -60,7 +59,13 @@ def dump_to_org(entries):
         parse_entry(appt)
 
 def main():
-    with open("config.yaml", "r") as stream:
+    config_path = Path(user_config_dir("ol-calendar"))
+    config_file = config_path.joinpath("config.yaml")
+    if not config_path.exists() or not config_file.exists():
+        print("Config file not present: %s" % config_file)
+        return
+
+    with open(user_config_dir("ol-calendar") + "/config.yaml", "r") as stream:
         try:
             config = yaml.safe_load(stream)
         except yaml.YAMLError as exc:

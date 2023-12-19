@@ -1,0 +1,12 @@
+azure:
+  client_id: "client_id"
+  tenant_id: "tenand_id"
+  client_secret: "client_secret"
+  username: "user@example.com"
+  scopes:
+    - "User.Read"
+    - "Calendars.Read"
+  days_history: 0
+  days_future: 7
+
+orgmode:
