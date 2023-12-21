@@ -2,6 +2,7 @@ import atexit
 import os
 from datetime import datetime
 from pathlib import Path
+import re
 
 import msal
 import pytz
@@ -27,8 +28,12 @@ def parse_entry(appt):
     apptstart = parse_cal_date(appt['start']['dateTime'])
     apptend = parse_cal_date(appt['end']['dateTime'])
     tags = ":meeting:work:"
-    if "Out of office" in appt['subject']:
+
+    skip_pattern = r"(^Canceled:|PTO|Out of office)"
+    if re.match(skip_pattern, appt['subject']):
+        print("Skipping %s" % appt['subject'])
         return
+
     if appt['categories']:
         tags = tags + ":" + ":".join([t.lower() for t in appt['categories']]) + ":"
 
