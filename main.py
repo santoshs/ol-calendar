@@ -1,16 +1,18 @@
-import atexit
-import os
-import sys
-from datetime import datetime
+from orgparse import node, load
 from pathlib import Path
-import re
-
-import msal
-import pytz
-import yaml
 from platformdirs import user_config_dir
+import yaml
+import msal
+import os
+import json
+from datetime import datetime
+import pytz
+from typing import Optional, List, Dict
+import re
+import sys
 
 from graph import Graph
+from orgnode import OrgNode, OrgFile
 
 
 def parse_cal_date(dateStr):
@@ -19,85 +21,92 @@ def parse_cal_date(dateStr):
     localTz = pytz.timezone('Asia/Kolkata')
     return exchangeTz.localize(d).astimezone(localTz)
 
+
 def format_orgmode_date(dateObj):
     return dateObj.strftime("%Y-%m-%d %H:%M")
+
 
 def format_orgmode_time(dateObj):
     return dateObj.strftime("%H:%M")
 
-def get_week_heading(dateObj):
-    year, week_num = dateObj.isocalendar()[:2]
-    return f"{year}-w{week_num:02}"
 
-def parse_entry(appt):
+def get_calendar(azure_settings):
+    config_path = Path(user_config_dir("ol-calendar"))
+    token_cache = msal.SerializableTokenCache()
+    token_cache_file = config_path.joinpath("token_cache.bin")
+    if os.path.exists(token_cache_file):
+        token_cache.deserialize(open(token_cache_file, "r").read())
+        atexit.register(lambda:
+            open(token_cache_file, "w").write(token_cache.serialize())
+            if token_cache.has_state_changed else None
+        )
+    graph = Graph(azure_settings, token_cache)
+    calendar = graph.get_calendar_entries()
+
+    skip_pattern = r"(^Canceled:|PTO|out of office|OOO)"
+    cal_entries = {}
+
+    entries = {}
+    for e in calendar.get('value'):
+        if re.search(skip_pattern, e['subject'], re.IGNORECASE) or \
+           re.search(skip_pattern, e['bodyPreview'], re.IGNORECASE):
+            print(f"Skipping {e['subject']}")
+            continue
+
+        entries[e['id']] = build_entry(e)
+
+    return entries
+
+
+def build_entry(appt: Dict) -> OrgNode:
+    """
+    Build an OrgNode from a calendar appointment.
+    :param appt: Dictionary containing calendar appointment details.
+    :return: An OrgNode instance.
+    """
     apptstart = parse_cal_date(appt['start']['dateTime'])
     apptend = parse_cal_date(appt['end']['dateTime'])
-    tags = ":meeting:work:"
 
-    skip_pattern = r"(^Canceled:|PTO|Out of office)"
-    if re.match(skip_pattern, appt['subject']):
-        return None
+    tags = ["meeting", "work"]
+    if appt.get('categories'):
+        tags.extend(tag.lower() for tag in appt['categories'])
 
-    if appt['responseStatus']['response'] == "notResponded":
-        return None
+    properties = {}
+    if appt['location'].get('displayName'):
+        properties['LOCATION'] = appt['location']['displayName']
+    if appt.get('onlineMeeting') and appt['onlineMeeting'].get('joinUrl'):
+        properties['JOINURL'] = appt['onlineMeeting']['joinUrl']
+    if appt.get('id'):
+        properties['MEETING_ID'] = appt['id']
+    if appt.get('responseStatus') and appt['responseStatus'].get("response"):
+        properties["RESPONSE_STATUS"] = appt['responseStatus']["response"]
 
-    if appt['categories']:
-        tags = tags + ":".join([t.lower() for t in appt['categories']]) + ":"
+    timestamp = apptstart if apptstart.date() == apptend.date() else None
 
-    if apptstart.date() == apptend.date():
-        dateStr = "<" + format_orgmode_date(apptstart) + "-" + format_orgmode_time(apptend) + ">"
-    else:
-        dateStr = "<" + format_orgmode_date(apptstart) + ">--<" + format_orgmode_date(apptend) + ">"
-    body = appt['bodyPreview'].translate({ord('\r'): None})
+    return OrgNode(
+        heading=appt['subject'],
+        todo="",
+        tags=tags,
+        properties=properties,
+        body=appt.get('bodyPreview', ""),
+        timestamp=timestamp
+    )
 
-    entry = []
-    entry.append(f"*** {dateStr} {appt['subject']} {tags}")
-    entry.append(":PROPERTIES:")
-    if appt['location']['displayName']:
-        entry.append(f":LOCATION: {appt['location']['displayName']}")
-    if appt['onlineMeeting']:
-        entry.append(f":JOINURL: {appt['onlineMeeting']['joinUrl']}")
-    entry.append(f":RESPONSE: {appt['responseStatus']['response']}")
-    entry.append(":END:")
-    entry.append(body)
-    entry.append("")
-    return "\n".join(entry)
+def update(old, new):
+    old.heading = new.heading
+    old.body = new.body
 
-def dump_to_org(entries, org_file):
-    weeks = {}
-    for appt in entries:
-        parsed_entry = parse_entry(appt)
-        if parsed_entry:
-            week_heading = get_week_heading(parse_cal_date(appt['start']['dateTime']))
-            if week_heading not in weeks:
-                weeks[week_heading] = []
-            weeks[week_heading].append(parsed_entry)
+    if not old.timestamp or not new.timestamp:
+        return
 
-    # Read the existing org file content
-    if os.path.exists(org_file):
-        with open(org_file, "r") as f:
-            org_content = f.readlines()
-    else:
-        org_content = []
+    if old.todo == 'DONE' and old.timestamp < new.timestamp:
+        old.update_timestamp(new.timestamp)
+        print(f"Updating {old.heading}")
+        # Only change todo state if timestamp has changed
+        old.change_todo_state("")
 
-    # Update org content with new entries
-    updated_content = []
-    for week_heading, entries in weeks.items():
-        heading_found = False
-        for line in org_content:
-            updated_content.append(line)
-            if line.strip() == f"* {week_heading}":
-                heading_found = True
-                updated_content.extend(entries)
-                org_content = org_content[len(updated_content):]
-                break
-        if not heading_found:
-            updated_content.append(f"* {week_heading}\n")
-            updated_content.extend(entries)
+    return
 
-    # Write updated content back to file
-    with open(org_file, "w") as f:
-        f.writelines(updated_content)
 
 def main():
     if len(sys.argv) != 2:
@@ -109,7 +118,7 @@ def main():
     config_path = Path(user_config_dir("ol-calendar"))
     config_file = config_path.joinpath("config.yaml")
     if not config_path.exists() or not config_file.exists():
-        print("Config file not present: %s" % config_file)
+        print(f"Config file not present: {config_file}")
         return
 
     with open(config_file, "r") as stream:
@@ -119,19 +128,22 @@ def main():
             print(exc)
             return
 
-    azure_settings = config["azure"]
-    token_cache = msal.SerializableTokenCache()
-    token_cache_file = config_path.joinpath("token_cache.bin")
-    if os.path.exists(token_cache_file):
-        token_cache.deserialize(open(token_cache_file, "r").read())
-        atexit.register(lambda:
-            open(token_cache_file, "w").write(token_cache.serialize())
-            if token_cache.has_state_changed else None
-        )
-    graph = Graph(azure_settings, token_cache)
-    entries = graph.get_calendar_entries()
+    calendar = get_calendar(config["azure"])
+    orgfile = OrgFile.from_file(org_file)
 
-    # Update org file
-    dump_to_org(entries["value"], org_file)
+    existing_entries = {}
+    for c in orgfile.children:
+        existing_entries[c.properties["MEETING_ID"]] = c
 
-main()
+    new_entries = {}
+    for id in calendar:
+        if id in existing_entries.keys():
+            update(existing_entries[id], calendar[id])
+        else:
+            orgfile.children.append(calendar[id])
+
+    orgfile.to_file(org_file)
+
+
+if __name__ == "__main__":
+    main()
