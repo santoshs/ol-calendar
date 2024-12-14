@@ -1,8 +1,59 @@
 from typing import Optional, List, Dict, Self
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import BaseModel, Field, PrivateAttr
 from orgparse import load
 import re
+import pytz
+
+class OrgClock(BaseModel):
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    duration: Optional[timedelta] = None
+
+    def __init__(self, start: str, end: Optional[str] = None):
+        """
+        Initialize OrgClock with start and end times as strings.
+        Convert these to timezone-aware timestamps and calculate the duration.
+
+        :param start: Start time as a string (e.g., "2024-12-10 04:30").
+        :param end: End time as a string (e.g., "2024-12-10 06:30") or None.
+        """
+        start_time = self._convert_to_datetime(start)
+        end_time = self._convert_to_datetime(end) if end else None
+        duration = (end_time - start_time) if end_time else None
+
+        super().__init__(start_time=start_time, end_time=end_time, duration=duration)
+
+    @staticmethod
+    def _convert_to_datetime(org_timestamp: str) -> datetime:
+        """
+        Convert an Org-mode timestamp (e.g., "2024-12-10 04:30") into a timezone-aware datetime.
+        :param org_timestamp: Org-mode timestamp string.
+        :return: Timezone-aware datetime object.
+        """
+        local_tz = pytz.timezone('Asia/Kolkata')
+        naive_dt = datetime.strptime(org_timestamp, "%Y-%m-%d %H:%M:%S")
+        return local_tz.localize(naive_dt)
+
+    def to_org_string(self) -> str:
+        """
+        Convert the OrgClock instance to an Org-mode CLOCK string.
+        :return: Org-mode formatted CLOCK string.
+        """
+        start_str = self.start_time.strftime("[%Y-%m-%d %a %H:%M]")
+        end_str = self.end_time.strftime("[%Y-%m-%d %a %H:%M]") if self.end_time else ""
+        duration_str = f" => {self._format_duration()}" if self.duration else ""
+        return f"CLOCK: {start_str}--{end_str}{duration_str}"
+
+    def _format_duration(self) -> str:
+        """
+        Format the duration as H:MM.
+        :return: Duration string in H:MM format.
+        """
+        total_minutes = int(self.duration.total_seconds() // 60)
+        hours, minutes = divmod(total_minutes, 60)
+        return f"{hours}:{minutes:02d}"
+
 
 class OrgNode(BaseModel):
     heading: str
@@ -11,7 +62,7 @@ class OrgNode(BaseModel):
     properties: Optional[Dict[str, str]] = None
     body: Optional[str] = None
     timestamp: Optional[datetime] = None
-    clocks: Optional[List[str]] = None
+    clocks: Optional[List[OrgClock]] = None
     level: int = 1
 
     def change_todo_state(self, new_state: Optional[str]) -> None:
@@ -58,7 +109,7 @@ class OrgNode(BaseModel):
             if self.clocks:
                 lines.append(":LOGBOOK:")
                 for clock in self.clocks:
-                    lines.append(f"CLOCK: {clock}")
+                    lines.append(clock.to_org_string())
                 lines.append(":END:")
 
         # Add properties
@@ -71,9 +122,9 @@ class OrgNode(BaseModel):
         # Add body
         if self.body:
             body_lines = self.body.splitlines()
-            timestamp_pattern = r'^\s*<\d{4}-\d{2}-\d{2}\s+[A-Za-z]{3}\s+\d{2}:\d{2}>\s*$'
+            timestamp_pattern = r'^\s*<\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}>\s*$'
 
-            filtered_lines = [line for line in body_lines
+            filtered_lines = [f"{' ' * self.level + line.strip()}" for line in body_lines
                               if not re.match(timestamp_pattern, line)]
 
             if filtered_lines:
@@ -95,7 +146,9 @@ class OrgFile(BaseModel):
         for node in root[1:]:  # Skip the root node
             timestamp = node.get_timestamps(active=True, point=True)
             if len(timestamp) > 0:
-                timestamp = datetime.strptime(str(timestamp[0]), "<%Y-%m-%d %a %H:%M>")
+                naive_dt = datetime.strptime(str(timestamp[0]), "<%Y-%m-%d %a %H:%M>")
+                india_tz = pytz.timezone('Asia/Kolkata')
+                timestamp = india_tz.localize(naive_dt)
             else:
                 timestamp = None
 
@@ -106,7 +159,7 @@ class OrgFile(BaseModel):
                 properties=node.properties,
                 body=node.body,
                 timestamp=timestamp,
-                clocks=[str(clock) for clock in node.clock] if node.clock else None,
+                clocks=[OrgClock(start=str(clock.start), end=str(clock.end)) for clock in node.clock] if node.clock else None,
                 level = node.level
             )
             parsed_nodes.append(org_node)

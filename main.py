@@ -81,7 +81,7 @@ def build_entry(appt: Dict) -> OrgNode:
     if appt.get('responseStatus') and appt['responseStatus'].get("response"):
         properties["RESPONSE_STATUS"] = appt['responseStatus']["response"]
 
-    timestamp = apptstart if apptstart.date() == apptend.date() else None
+    timestamp = apptstart
 
     return OrgNode(
         heading=appt['subject'],
@@ -99,11 +99,12 @@ def update(old, new):
     if not old.timestamp or not new.timestamp:
         return
 
-    if old.todo == 'DONE' and old.timestamp < new.timestamp:
-        old.update_timestamp(new.timestamp)
+    if old.timestamp < new.timestamp:
         print(f"Updating {old.heading}")
-        # Only change todo state if timestamp has changed
-        old.change_todo_state("")
+        old.update_timestamp(new.timestamp)
+
+        if old.todo == 'DONE':
+            old.change_todo_state("")
 
     return
 
@@ -133,10 +134,16 @@ def main():
 
     existing_entries = {}
     for c in orgfile.children:
+        if "MEETING_ID" not in c.properties:
+            print(f"Meeting ID missing in \n{c.to_org_string()}")
+            continue
         existing_entries[c.properties["MEETING_ID"]] = c
 
     new_entries = {}
     for id in calendar:
+        if calendar[id].timestamp is None:
+            print(f"Missing Timestamp in \n: {calendar[id].to_org_string()}")
+            continue
         if id in existing_entries.keys():
             update(existing_entries[id], calendar[id])
         else:
