@@ -53,7 +53,7 @@ def get_calendar(azure_settings):
             print(f"Skipping {e['subject']}")
             continue
 
-        entries[e['id']] = build_entry(e)
+        entries[e['subject']] = build_entry(e)
 
     return entries
 
@@ -103,7 +103,7 @@ def update(old, new):
         print(f"Updating {old.heading}")
         old.update_timestamp(new.timestamp)
 
-        if old.todo == 'DONE':
+        if old.todo == 'DONE' or old.todo == 'CANCELLED':
             old.change_todo_state("")
 
     return
@@ -130,27 +130,43 @@ def main():
             return
 
     calendar = get_calendar(config["azure"])
+    # calendar = {}
     orgfile = OrgFile.from_file(org_file)
 
     existing_entries = {}
     for c in orgfile.children:
-        if "MEETING_ID" not in c.properties:
-            print(f"Meeting ID missing in \n{c.to_org_string()}")
-            continue
-        existing_entries[c.properties["MEETING_ID"]] = c
+        if c.heading in existing_entries.keys():
+            if existing_entries[c.heading].clocks:
+                existing_entries[c.heading].clocks.extend(c.clocks if c.clocks else [])
+            else:
+                existing_entries[c.heading].clocks = c.clocks
+        else:
+            existing_entries[c.heading] = c
 
-    new_entries = {}
-    for id in calendar:
-        if calendar[id].timestamp is None:
+    orgfile.children = []
+    for heading in calendar:
+        if calendar[heading].timestamp is None:
             print(f"Missing Timestamp in \n: {calendar[id].to_org_string()}")
             continue
-        if id in existing_entries.keys():
-            update(existing_entries[id], calendar[id])
+        if heading in existing_entries.keys():
+            update(existing_entries[heading], calendar[heading])
+            orgfile.children.append(existing_entries.pop(heading))
         else:
-            orgfile.children.append(calendar[id])
+            print(f"Adding new entry {heading}")
+            orgfile.children.append(calendar[heading])
 
+
+    existing_keys = list(existing_entries.keys())
+    for e in existing_keys:
+        if not existing_entries[e].todo:
+            print("Removing cancelled/stale event")
+            existing_entries.pop(e)
+
+    children = list(existing_entries.values())
+    children.extend(orgfile.children)
+    orgfile.children = children
     orgfile.to_file(org_file)
-
+    return
 
 if __name__ == "__main__":
     main()

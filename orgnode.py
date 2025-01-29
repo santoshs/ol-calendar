@@ -152,9 +152,16 @@ class OrgFile(BaseModel):
             else:
                 timestamp = None
 
+            # remove cancelled
+            heading = node.heading
+            todo = node.todo
+            if heading.startswith("CANCELLED"):
+                heading = heading[9:].strip()
+                todo = "CANCELLED"
+
             org_node = OrgNode(
-                heading=node.heading,
-                todo=node.todo,
+                heading=heading,
+                todo=todo,
                 tags=node.tags,
                 properties=node.properties,
                 body=node.body,
